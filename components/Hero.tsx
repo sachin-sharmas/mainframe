@@ -15,6 +15,7 @@ export function Hero() {
         className="w-full max-w-7xl mx-auto px-6 pt-28 pb-12 sm:pt-32 flex-1 flex flex-col justify-center"
       >
         <motion.div
+        
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
