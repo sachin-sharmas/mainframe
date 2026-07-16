@@ -33,19 +33,35 @@ export function BackgroundVideo() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    let cancelled = false;
     let rafId: number;
     let resizeObserver: ResizeObserver;
 
     const images: HTMLImageElement[] = [];
+    const decoded: boolean[] = new Array(FRAME_COUNT).fill(false);
     let size = { width: 0, height: 0 };
     let prevX: number | null = null;
     let targetFrame = 0;
     let renderedFrame = 0;
     let lastTimestamp: number | null = null;
 
+    // Finds the nearest frame that has actually finished decoding so we can
+    // draw *something* immediately instead of waiting on the whole sequence
+    // to load — the network/decode of 51 frames is the slow part, not React.
+    const nearestDecodedIndex = (target: number) => {
+      if (decoded[target]) return target;
+      for (let offset = 1; offset < FRAME_COUNT; offset++) {
+        const lo = target - offset;
+        const hi = target + offset;
+        if (lo >= 0 && decoded[lo]) return lo;
+        if (hi < FRAME_COUNT && decoded[hi]) return hi;
+      }
+      return -1;
+    };
+
     const drawFrame = (frameFloat: number) => {
-      const img = images[Math.min(FRAME_COUNT - 1, Math.max(0, Math.round(frameFloat)))];
+      const wanted = Math.min(FRAME_COUNT - 1, Math.max(0, Math.round(frameFloat)));
+      const index = nearestDecodedIndex(wanted);
+      const img = index === -1 ? undefined : images[index];
       if (!img || size.width === 0 || size.height === 0) return;
 
       const scale = Math.max(size.width / img.width, size.height / img.height);
@@ -107,21 +123,28 @@ export function BackgroundVideo() {
     });
     resizeObserver.observe(container);
 
-    Promise.all(
-      FRAME_URLS.map((src) => {
-        const img = new Image();
-        img.src = src;
-        images.push(img);
-        return img.decode().catch(() => {});
-      })
-    ).then(() => {
-      if (cancelled) return;
-      window.addEventListener("mousemove", handleMouseMove);
-      rafId = requestAnimationFrame(tick);
+    // Kick off the loop and mouse listener right away — drawFrame falls back
+    // to the nearest already-decoded frame, so the hero paints as soon as the
+    // first image lands instead of waiting on all 51 to finish.
+    window.addEventListener("mousemove", handleMouseMove);
+    rafId = requestAnimationFrame(tick);
+
+    FRAME_URLS.forEach((src, i) => {
+      const img = new Image();
+      // Nudge the browser to fetch the first few frames first so there's
+      // something on screen almost immediately.
+      if (i < 6) img.setAttribute("fetchpriority", "high");
+      img.src = src;
+      images[i] = img;
+      img
+        .decode()
+        .catch(() => {})
+        .finally(() => {
+          decoded[i] = true;
+        });
     });
 
     return () => {
-      cancelled = true;
       window.removeEventListener("mousemove", handleMouseMove);
       resizeObserver.disconnect();
       if (rafId) cancelAnimationFrame(rafId);
